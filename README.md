@@ -24,6 +24,13 @@ sudo apt install g++ make libglew-dev libglfw3-dev libgl1-mesa-dev libpthread-st
   make run
 ```
 
+## Search-line commands
+
+# Change showing results count
+```bash
+>> max_results_count: 500
+```
+
 ## Screenshots
 ![image](https://github.com/user-attachments/assets/a61b28ee-ade1-4dfa-b2cd-92d0eff61b04)
 

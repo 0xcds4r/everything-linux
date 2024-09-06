@@ -24,3 +24,6 @@ sudo apt install g++ make libglew-dev libglfw3-dev libgl1-mesa-dev libpthread-st
   make run
 ```
 
+## Screenshots
+![image](https://github.com/user-attachments/assets/a61b28ee-ade1-4dfa-b2cd-92d0eff61b04)
+

@@ -1,6 +1,6 @@
 #pragma once
 
-#define APP_VERSION "0.0.1"
+#define APP_VERSION "0.0.2"
 #define MAX_WIDTH 	1280
 #define MAX_HEIGHT 	720
 
@@ -19,10 +19,17 @@
 #include <thread>
 #include <future>
 #include <chrono> 
-// #include <new> 
 #include <csignal>
 #include <execinfo.h>
 #include <dlfcn.h>
 #include <unistd.h>
 #include <string>
 #include <iterator>
+#include <list>
+#include <cstring>
+#include <execution> 
+
+#define LOGI(...) std::cout << __VA_ARGS__ << std::endl
+#define LOGE(...) std::cerr << __VA_ARGS__ << std::endl
+
+extern const char* loadingText;

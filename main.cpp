@@ -1,12 +1,15 @@
 #include <main.h>
+#include <FileIndexer.h>
+
+extern FileIndexer* pFileIdxr;
 
 void signalHandler(int signal) {
 	std::cerr << "Signal " << signal << " received." << std::endl;
 
-	void* array[64];
+	void* array[128];
 	size_t size;
 
-	size = backtrace(array, 64);
+	size = backtrace(array, 128);
 	std::cerr << "Backtrace (most recent call last):" << std::endl;
 
 	for (size_t i = 0; i < size; ++i) {
@@ -34,9 +37,9 @@ void signalHandler(int signal) {
 
 GLFWwindow* window = nullptr;
 
-constexpr size_t MAX_QUERY_SIZE = 1024;  
-char searchQuery[MAX_QUERY_SIZE] = "";
-char prevSearchQuery[MAX_QUERY_SIZE] = "";
+constexpr size_t MAX_QUERY_SIZE = 2048;  
+char searchQuery[MAX_QUERY_SIZE+1] = "";
+char prevSearchQuery[MAX_QUERY_SIZE+1] = "";
 
 static int itemsPerPage = 30;
 
@@ -89,112 +92,6 @@ void SetupImGuiStyle() {
 	style.Colors[ImGuiCol_CheckMark] = ImVec4(0.33f, 0.55f, 0.65f, 1.00f);
 }
 
-namespace fs = std::filesystem;
-
-class FileIndexer {
-public:
-	void indexDirectory(const fs::path& path) {
-		try {
-			for (const auto& entry : fs::recursive_directory_iterator(path, fs::directory_options::skip_permission_denied)) {
-				if (entry.is_symlink()) {
-					continue;
-				}
-
-				if (entry.is_regular_file() || entry.is_directory()) { 
-					std::lock_guard<std::mutex> lock(mutex);
-					files[entry.path().filename().string()].push_back(entry.path().string());
-				}
-			}
-		} catch (const fs::filesystem_error& e) {
-			std::cerr << "Filesystem error: " << e.what() << std::endl;
-		}
-	}
-
-	void indexDirectories(const std::vector<fs::path>& paths) {
-		std::vector<std::thread> threads;
-		for (const auto& path : paths) {
-			threads.emplace_back(&FileIndexer::indexDirectory, this, path);
-		}
-
-		for (auto& thread : threads) {
-			thread.join();
-		}
-	}
-
-	std::vector<std::string> search(const std::string& query) const {
-		std::vector<std::string> results{};
-
-        for (const auto& [filename, paths] : files) {
-        	if (filename.find(query) != std::string::npos) {
-         	   results.insert(results.end(), paths.begin(), paths.end());
-        	}
-
-       		for (const auto& path : paths) 
-       		{
-       			if (query.length() >= path.length()) {
-                    continue;
-                }
-
-            	if (path.find(query) != std::string::npos) {
-            	    results.push_back(path);
-            	}
-        	}
-    	}
-    	
-        return results;
-	}
-
-	std::vector<std::string> searchWithRegex(const std::string& pattern) const {
-		std::vector<std::string> results;
-        std::regex re(pattern);
-        for (const auto& [filename, paths] : files) {
-            if (std::regex_search(filename, re)) {
-                results.insert(results.end(), paths.begin(), paths.end());
-            }
-        }
-        return results;
-	}
-
-	std::vector<std::string> searchByPath(const std::string& pathQuery) const 
-	{
-		std::vector<std::string> results{};
-
-		if(pathQuery.empty()) {
-			return results;
-		}
-		
-		for (const auto& [_, paths] : files) {
-			for (const auto& path : paths) {
-				if(path.find(pathQuery) == 0) {
-					results.push_back(path);
-				}
-			}
-		}
-		return results;
-	}
-
-
-	std::vector<std::string> getAllFilesAndDirectoriesAtHome() const {
-		std::vector<std::string> results;
-		for (const auto& [_, paths] : files) {
-			for (const auto& path : paths) {
-				if (path.find("/home/") == 0) {
-					results.push_back(path);
-				}
-			}
-		}
-		return results;
-	}
-
-private:
-	bool isValidPath(const std::string& path) const {
-		return fs::exists(path) && !fs::is_directory(path);
-	}
-
-	std::unordered_map<std::string, std::vector<std::string>> files{};
-	mutable std::mutex mutex;
-};
-
 void openFileInExplorer(const std::string& path) 
 {
 	std::string command = "xdg-open \"" + path + "\"";
@@ -227,7 +124,7 @@ void openFolderInExplorer(const std::string& filePath)
 	system(command.c_str());
 }
 
-void copyFilePathToClipboard(const std::string& filePath) 
+void copyFilePathToInput(const std::string& filePath) 
 {
 	if (filePath.empty() || filePath.size() >= MAX_QUERY_SIZE) {
 		std::cerr << "Invalid file path length." << std::endl;
@@ -239,7 +136,7 @@ void copyFilePathToClipboard(const std::string& filePath)
 	sprintf(prevSearchQuery, "%s", searchQuery); // Also copy to prevSearchQuery
 }
 
-void copyPathToClipboard(const std::string& filePath)
+void copyPathToInput(const std::string& filePath)
 {
 	std::filesystem::path path(filePath);
 	std::string folderPath = path.parent_path().string();
@@ -281,24 +178,33 @@ void updateItemsPerPageFromQuery()
 bool useRegex = false;
 bool usePath = true;
 bool useAutoSearch = false;
+bool useScrollPage = false;
 
-void renderGui(FileIndexer& indexer) 
+void renderGui()
 {
-	static std::vector<std::string> searchResults = indexer.getAllFilesAndDirectoriesAtHome(); 
-	static std::vector<std::string> regexResults;
-	static std::vector<std::string> pathResults;
+	if (!pFileIdxr) {
+		LOGE("pFileIdxr is NULL");
+		return;
+	}
+
+	static bool bCopy = false;
 	static int selected = -1;
-
 	static int currentPage = 0;
-
 	static auto lastAutoSearchTime = std::chrono::steady_clock::now();
 	constexpr std::chrono::milliseconds autoSearchInterval(1000);
+
+	static auto lastCopyTime = std::chrono::steady_clock::now();
+	constexpr std::chrono::milliseconds CopyInterval(2000);
 
 	ImVec2 displaySize = ImGui::GetIO().DisplaySize;
 	ImGui::SetNextWindowSize(displaySize, ImGuiCond_Always);
 	ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
 
-	ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar;
+	ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar |
+									ImGuiWindowFlags_NoResize |
+									ImGuiWindowFlags_NoMove |
+									ImGuiWindowFlags_NoScrollbar;
+
 	ImGui::Begin("File and Directory Search", nullptr, window_flags);
 
 	ImGui::InputText("<<<", searchQuery, MAX_QUERY_SIZE, ImGuiInputTextFlags_EnterReturnsTrue);
@@ -308,51 +214,41 @@ void renderGui(FileIndexer& indexer)
 	ImGui::SameLine();
 	ImGui::Checkbox("Use Path", &usePath);
 	ImGui::SameLine();
-	ImGui::Checkbox("Use Auto Search", &useAutoSearch);
+	ImGui::Checkbox("Use Scroll Page", &useScrollPage);
 	ImGui::SameLine();
+	ImGui::Checkbox("Use Auto Search", &useAutoSearch);
 
-	if(useRegex) {
+	if (useRegex) {
 		usePath = false;
 	}
 
-	static bool searchTriggered = false;
+	static std::vector<std::string> searchResults = pFileIdxr->getHomeDir();
 	static std::vector<std::string> results = searchResults;
 
-	if(strlen(searchQuery) == 0) {
-		results = searchResults;
-	}
-
 	auto performSearch = [&]() {
-		std::cout << strlen(searchQuery) << std::endl;
 		currentPage = 0;
 
-		// std::string szSearchQuery(searchQuery);
-
 		if (usePath) {
-			std::cout << "search by path" << std::endl;
-			results = indexer.searchByPath(searchQuery);
+			results = pFileIdxr->searchPath(searchQuery);
 		} else if (useRegex) {
-			std::cout << "search by regex" << std::endl;
-			results = indexer.searchWithRegex(searchQuery);
+			results = pFileIdxr->searchRegex(searchQuery);
 		} else {
-			std::cout << "search by file" << std::endl;
-			results = indexer.search(searchQuery);
+			results = pFileIdxr->searchFile(searchQuery);
 		}
-		searchTriggered = strlen(searchQuery) > 0;
-		if(searchTriggered) {
-			sprintf(prevSearchQuery, "%s", searchQuery); // Also copy to prevSearchQuery
+
+		if (strlen(searchQuery) > 0) {
+			std::strcpy(prevSearchQuery, searchQuery);
+		} else {
+			results = searchResults;
 		}
 	};
 
+	ImGui::SameLine();
 	if (ImGui::Button("Search")) {
 		performSearch();
 	}
 
-	if(results.empty()) {
-		results = searchResults;
-	}
-
-	if (useAutoSearch && strcmp(searchQuery, prevSearchQuery) != 0) 
+	if (useAutoSearch && strlen(searchQuery) > 0 && strcmp(searchQuery, prevSearchQuery) != 0) 
 	{
 		auto now = std::chrono::steady_clock::now();
 		if (now - lastAutoSearchTime >= autoSearchInterval) {
@@ -362,7 +258,6 @@ void renderGui(FileIndexer& indexer)
 	}
 
 	ImGui::Text("Results:");
-	// const std::vector<std::string>& results = searchTriggered ? (usePath ? pathResults : (useRegex ? regexResults : searchResults)) : searchResults;
 
 	int totalPages = (results.size() + itemsPerPage - 1) / itemsPerPage;
 	ImGui::BeginChild("Results", ImVec2(0, 300), true);
@@ -378,81 +273,147 @@ void renderGui(FileIndexer& indexer)
 			selected = i;
 		}
 	}
+
+	if(useScrollPage) {
+		float scrollY = ImGui::GetScrollY();
+		float maxScrollY = ImGui::GetScrollMaxY();
+		static bool prevScroll = true;
+
+		if (!prevScroll && (scrollY >= maxScrollY - 1.0f || scrollY == 0.0f)) {
+			if (scrollY >= maxScrollY - 1.0f && currentPage < totalPages - 1) {
+				currentPage++;
+				ImGui::SetScrollY(0.1f);
+			} else if (scrollY == 0.0f && currentPage > 0) {
+				currentPage--;
+				ImGui::SetScrollY(0.5f);
+			}
+			prevScroll = true;
+		} 
+		else if (scrollY > 0.1f) {
+			prevScroll = false;
+		}
+	}
+
 	ImGui::EndChild();
 
 	if (ImGui::Button("Previous Page") && currentPage > 0) {
 		currentPage--;
+		ImGui::SetScrollY(ImGui::GetScrollMaxY());
 	}
 	ImGui::SameLine();
 	if (ImGui::Button("Next Page") && currentPage < totalPages - 1) {
 		currentPage++;
+		ImGui::SetScrollY(0.0f);
 	}
 
 	ImGui::SameLine();
 	if (selected != -1) {
 		std::string selectedFile = results[selected];
-		
+
 		if (ImGui::Button("Open Folder")) {
-			openFolderInExplorer(selectedFile); 
+			openFolderInExplorer(selectedFile);
 		}
 
 		ImGui::SameLine();
 
 		if (ImGui::Button("Show path")) {
-			if(!usePath)
-				copyFilePathToClipboard(selectedFile);
-			else
-				copyPathToClipboard(selectedFile);
+			if (!usePath) {
+				copyFilePathToInput(selectedFile);
+			} else {
+				copyPathToInput(selectedFile);
+			}
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button("Copy path")) {
+			bCopy = true;
+			lastCopyTime = std::chrono::steady_clock::now();
+		}
+
+		if(bCopy) 
+		{
+			auto now = std::chrono::steady_clock::now();
+			if (now - lastCopyTime >= CopyInterval) {
+				bCopy = false;
+				lastCopyTime = now;
+			}
+
+			std::filesystem::path path(selectedFile);
+			std::string folderPath = path.parent_path().string();
+
+			if (!usePath) {
+				ImGui::SameLine();
+				ImGui::Text("<< '%s' copied to clipboard >>", selectedFile.c_str());
+				glfwSetClipboardString(window, selectedFile.c_str());
+			} else {
+				ImGui::SameLine();
+				ImGui::Text("<< '%s' copied to clipboard >>", folderPath.c_str());
+				glfwSetClipboardString(window, folderPath.c_str());
+			}
 		}
 	}
 
-	ImGui::SameLine();
-
+	if(!bCopy) ImGui::SameLine();
 	ImGui::Text("Page %d of %d (%d)", currentPage + 1, totalPages, itemsPerPage);
 
 	ImGui::End();
 }
 
-void renderLoadingScreen() {
+
+const char* loadingText = "";
+void renderLoadingScreen() 
+{
+	if(!loadingText) {
+		return;
+	}
+
 	ImVec2 displaySize = ImGui::GetIO().DisplaySize;
-	ImGui::SetNextWindowSize(displaySize, ImGuiCond_Always);
-	ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
-	ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar;
 
-	ImGui::Begin("Loading", nullptr, window_flags);
+	ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
 
-	ImGui::Text("Indexing files and directories...");
-	ImGui::Text("\n");
-	ImGui::Text("------------------------------------------------------------------------------------------------------------------------------");
-	ImGui::Text("\n");
+	ImVec2 text_pos_state(displaySize.x * 0.5f - ImGui::CalcTextSize(loadingText).x * 0.5, displaySize.y * 0.1f);
+	draw_list->AddText(text_pos_state, IM_COL32(255, 255, 255, 255), loadingText);
 
-	ImGui::Text("Everything for Linux it's free and open-source software.");
-	ImGui::Text("\n");
+	ImVec2 separator_pos(displaySize.x * 0.1f, displaySize.y * 0.2f);
 
-	ImGui::Text("- The original Everything project for Windows has nothing to do with this project, apart from the idea.");
-	// ImGui::Text("\n");
+	int size = strlen("- The author of this project greatly missed a proper search tool for Linux, so they decided to recreate something similar to Everything.");
+	
+	std::string bufferTp;
+	for(int i = 0; i < size; i++)
+		bufferTp += std::string("-");
 
-	ImGui::Text("- The author of this project greatly missed a proper search tool for Linux, so they decided to recreate something similar to Everything.");
-	// ImGui::Text("\n");
+	draw_list->AddText(separator_pos, IM_COL32(255, 255, 255, 255), bufferTp.c_str());
 
-	ImGui::Text("- The author plans to continue developing this project if they receive support from regular users.");
-	ImGui::Text("\n");
+	ImVec2 text_pos_info(displaySize.x * 0.1f, displaySize.y * 0.25f);
+	draw_list->AddText(text_pos_info, IM_COL32(0, 255, 0, 255), "Everything for Linux it's free and open-source software.");
 
-	ImGui::Text("The author of 'Everything for Linux' is 0xcds4r.");
+	ImVec2 text_pos_info2(displaySize.x * 0.1f, displaySize.y * 0.30f);
+	draw_list->AddText(text_pos_info2, IM_COL32(0, 255, 0, 255), "- The original Everything project for Windows has nothing to do with this project, apart from the idea.");
 
-	ImGui::Text("\n");
-	ImGui::Text("------------------------------------------------------------------------------------------------------------------------------");
-	ImGui::Text("\n");
+	ImVec2 text_pos_info3(displaySize.x * 0.1f, displaySize.y * 0.35f);
+	draw_list->AddText(text_pos_info3, IM_COL32(0, 255, 0, 255), "- The author of this project greatly missed a proper search tool for Linux, so they decided to recreate something similar to Everything.");
 
-	ImGui::End();
+	ImVec2 text_pos_info4(displaySize.x * 0.1f, displaySize.y * 0.40f);
+	draw_list->AddText(text_pos_info4, IM_COL32(0, 255, 0, 255), "- The author plans to continue developing this project if they receive support from regular users.");
+
+	ImVec2 text_pos_author(displaySize.x * 0.1f, displaySize.y * 0.45f);
+	draw_list->AddText(text_pos_author, IM_COL32(0, 255, 0, 255), "The author of 'Everything for Linux' is 0xcds4r.");
+
+	ImVec2 separator_pos_bottom(displaySize.x * 0.1f, displaySize.y * 0.50f);
+	draw_list->AddText(separator_pos_bottom, IM_COL32(255, 255, 255, 255), bufferTp.c_str());
 }
 
-int main() 
-{
+void setup_signal_handler() {
 	std::signal(SIGSEGV, signalHandler); // Handle segmentation faults
 	std::signal(SIGABRT, signalHandler); // Handle aborts
 	std::signal(SIGFPE, signalHandler);  // Handle floating point exceptions
 	std::signal(SIGILL, signalHandler);  // Handle illegal instructions
+}
+
+int main() 
+{
+	setup_signal_handler();
 
 	if (!glfwInit()) { 
 		return -1;
@@ -484,26 +445,6 @@ int main()
 	ImGui::StyleColorsDark();
 	SetupImGuiStyle();
 
-	std::promise<void> indexPromise;
-	std::future<void> indexFuture = indexPromise.get_future();
-
-	FileIndexer indexer;
-	std::thread indexingThread([&]() {
-		std::vector<fs::path> directories = {
-			"/home/",           // User home directories
-			"/media/",          // Mount points
-			"/mnt/",            // Mount points
-			"/opt/",            // Optional application software packages
-			"/usr/",            // User binaries, libraries, etc.
-			"/var/",            // Variable data files
-			"/etc/",            // Configuration files
-			"/tmp/",            // Temporary files
-			"/root/"            // Root user directory
-		};
-		indexer.indexDirectories(directories);
-		indexPromise.set_value();  
-	});
-
 	while (!glfwWindowShouldClose(window)) 
 	{
 		glfwPollEvents();
@@ -512,10 +453,23 @@ int main()
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 
-		if (indexFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-			renderGui(indexer);
-		} else {
+		if(FileIndexer::getState() != STATE_CACHING_END) {
+			loadingText = "Initializing..";
 			renderLoadingScreen();
+		} else {
+			renderGui();
+		}
+
+		switch(FileIndexer::getState()) {
+			case STATE_NONE: {
+				FileIndexer::Initialise();
+				break;
+			}
+
+			case STATE_INIT: {
+				pFileIdxr->indexDirectories(getAcceptedDirs());
+				break;
+			}
 		}
 
 		ImGui::Render();
@@ -524,8 +478,6 @@ int main()
 
 		glfwSwapBuffers(window);
 	}
-
-	indexingThread.join();
 
 	ImGui_ImplOpenGL3_Shutdown();
 	ImGui_ImplGlfw_Shutdown();

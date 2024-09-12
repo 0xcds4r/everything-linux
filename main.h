@@ -1,17 +1,17 @@
 #pragma once
 
-#define APP_VERSION "0.0.2"
+#define APP_VERSION "0.0.3"
 #define MAX_WIDTH 	1280
 #define MAX_HEIGHT 	720
 
 #include <external/imgui/imgui.h>
+#include <external/imgui/imgui_internal.h>
 #include <external/imgui/imgui_impl_glfw.h>
 #include <external/imgui/imgui_impl_opengl3.h>
 
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <filesystem>
-#include <unordered_map>
 #include <vector>
 #include <regex>
 #include <cstdlib>  
@@ -32,4 +32,4 @@
 #define LOGI(...) std::cout << __VA_ARGS__ << std::endl
 #define LOGE(...) std::cerr << __VA_ARGS__ << std::endl
 
-extern const char* loadingText;
+// extern const char* loadingText;

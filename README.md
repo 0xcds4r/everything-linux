@@ -54,10 +54,9 @@ Build:
 ```
 
 # Screenshots
-![image](https://github.com/user-attachments/assets/66bdcd03-7149-4484-9c90-cc2338815638)
-![image](https://github.com/user-attachments/assets/cd45f70b-c2c3-4179-918b-2ebe4368767e)
-![image](https://github.com/user-attachments/assets/c3ee45f0-59ca-4efa-9c2b-d950b7302168)
-![image](https://github.com/user-attachments/assets/cd6a0f46-0718-411a-b4a1-26822fd0acc1)
-![image](https://github.com/user-attachments/assets/b29bf5db-4acb-4561-aa5b-0fa7d704ff14)
+![image](https://github.com/user-attachments/assets/d548d0ca-54b5-4eaa-a0f7-70a766ff805f)
 
+![image](https://github.com/user-attachments/assets/152e7a88-a00d-4626-99f2-b3c061497245)
+
+![image](https://github.com/user-attachments/assets/77622f95-ce27-4614-90ab-c4110dcb4c8c)
 

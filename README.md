@@ -1,6 +1,6 @@
 # Issues
 ### This is an alpha version that may contain errors, bugs, or unexpected crashes. Please help us improve the product by reporting any issues you encounter through the issues system
->>> https://github.com/0xcds4r/everything-linux/issues <<<
+> https://github.com/0xcds4r/everything-linux/issues <<<
 
 # About
 Everything for Linux it's free and open-source software.
